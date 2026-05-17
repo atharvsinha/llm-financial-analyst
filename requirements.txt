@@ -1,0 +1,9 @@
+httpx
+beautifulsoup4
+google-genai
+pydantic
+click
+rapidfuzz
+python-dotenv
+markdownify
+markdown2

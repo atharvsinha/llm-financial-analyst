@@ -1,0 +1,24 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDEs
+.idea/
+.vscode/
+
+# MacOS
+.DS_Store
+
+# Output Files
+analyst_summary_log.txt
+cost_log.txt
+final_summary.md
+
