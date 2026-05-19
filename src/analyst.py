@@ -1,8 +1,11 @@
+import sys
 import logging
 from src.fetcher import fetch_press_release, html_to_markdown
-from src.extractor import extract_highlights, extract_risk, extract_question, shared_cost_log
+from src.extractor import extract_all, shared_cost_log, QuotaExhaustedError
 from src.confidence import calculate_highlight_confidence, calculate_risk_confidence, calculate_question_confidence
 from src.models import AnalystSummary, Highlight, Risk, AnalystQuestion
+from src.evaluator import run_evaluation, render_eval_markdown
+from src.fetcher import pdf_to_markdown
 
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -16,34 +19,39 @@ def run_analysis(url: str) -> AnalystSummary:
     markdown = ""
     print("  -> Step 1: Fetching earnings press release HTML content...")
     try:
-        # Phase 1: Fetch and normalize
-        html = fetch_press_release(url)
-        print("  -> Step 2: Normalizing HTML to clean Markdown...")
-        markdown = html_to_markdown(html)
+        # Fetch and normalize
+        content, content_type = fetch_press_release(url)
+        print("  -> Step 2: Normalizing source content to clean Markdown...")
+        if 'pdf' in content_type:
+            markdown = pdf_to_markdown(content)
+        else:
+            # Assume HTML
+            html = content.decode('utf-8', errors='ignore')
+            markdown = html_to_markdown(html)
     except Exception as e:
         logger.warning(f"Failed to fetch or parse URL: {e}")
         # Continue with empty markdown to return degraded result
         
     try:
-        # Phase 3: Extraction
-        print("  -> Step 3: Extracting quantitative financial highlights via LLM...")
-        extracted_highlights = extract_highlights(markdown)
-        
-        print("  -> Step 4: Extracting attributed forward-looking risks via LLM...")
-        extracted_risk = extract_risk(markdown)
-        
-        print("  -> Step 5: Generating synthetic analyst call question via LLM...")
-        extracted_question = extract_question(markdown, extracted_highlights, extracted_risk)
-        
-        # Phase 4: Confidence Scoring
-        print("  -> Step 6: Programmatically calculating deterministic confidence metrics...")
+        # Extraction
+        print("  -> Step 3: Extracting highlights, risk, and question via a single LLM call...")
+        extraction_result = extract_all(markdown)
+        extracted_highlights = extraction_result.highlights
+        extracted_risk = extraction_result.risk
+        extracted_question = extraction_result.question
+
+        # Confidence Scoring
+        print("  -> Step 4: Programmatically calculating deterministic confidence metrics...")
         final_highlights = [calculate_highlight_confidence(markdown, h) for h in extracted_highlights]
         final_risk = calculate_risk_confidence(markdown, extracted_risk)
         final_question = calculate_question_confidence(markdown, extracted_question, extracted_highlights)
-        
+
+    except QuotaExhaustedError as e:
+        print(f"\n[!] API Quota Exhausted: {e}")
+        print("[!] No output files were written. Please wait and try again.\n")
+        sys.exit(1)
     except Exception as e:
         logger.warning(f"Error during extraction or scoring: {e}")
-        # Degraded results on catastrophic failure
         final_highlights = [
             Highlight(text="N/A", citation_span="N/A", metric_label="N/A", confidence=0.0, confidence_reasoning="Failed"),
             Highlight(text="N/A", citation_span="N/A", metric_label="N/A", confidence=0.0, confidence_reasoning="Failed"),
@@ -60,33 +68,31 @@ def run_analysis(url: str) -> AnalystSummary:
         cost_log=shared_cost_log
     )
     
-    # 1. Append cost log to persistent cost log file
-    try:
-        with open("cost_log.txt", "a", encoding="utf-8") as f:
-            f.write(f"Model: {summary.cost_log.model} | Input: {summary.cost_log.input_tokens} | Output: {summary.cost_log.output_tokens} | Cost: ${summary.cost_log.usd_cost:.4f}\n")
-    except Exception as e:
-        logger.warning(f"Failed to append to cost log: {e}")
-        
-    # 2. Log full JSON summary (original requirement)
-    try:
-        with open("analyst_summary_log.txt", "w", encoding="utf-8") as f:
-            f.write(summary.model_dump_json(indent=2))
-    except Exception as e:
-        logger.warning(f"Failed to write json summary log: {e}")
 
-    # 3. Render 1-pager Markdown
+    # Render 1-pager Markdown
+    markdown_report = ""
     try:
         from src.renderer import render_markdown
         markdown_report = render_markdown(summary)
-        
-        # Word count sanity check (assert 250-500)
-        word_count = len(markdown_report.split())
-        if not (250 <= word_count <= 500):
-            logger.warning(f"Word count sanity check failed: {word_count} words (expected 250-500).")
-            
         with open("final_summary.md", "w", encoding="utf-8") as f:
             f.write(markdown_report)
     except Exception as e:
         logger.warning(f"Failed to render or write markdown report: {e}")
-        
+
+    # Run evaluation across all 5 criteria and save eval.md
+    print("  -> Step 5: Running full evaluation across all 5 criteria...")
+    try:
+        eval_results = run_evaluation(summary, markdown, markdown_report)
+        eval_md = render_eval_markdown(eval_results)
+        with open("eval.md", "w", encoding="utf-8") as f:
+            f.write(eval_md)
+            
+        from src.renderer import render_markdown
+        markdown_report_final = render_markdown(summary)
+        with open("final_summary.md", "w", encoding="utf-8") as f:
+            f.write(markdown_report_final)
+            
+    except Exception as e:
+        logger.warning(f"Failed to run or write evaluation: {e}")
+
     return summary

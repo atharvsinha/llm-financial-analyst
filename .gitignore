@@ -18,7 +18,7 @@ __pycache__/
 .DS_Store
 
 # Output Files
-analyst_summary_log.txt
 cost_log.txt
 final_summary.md
+eval.md
 

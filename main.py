@@ -16,9 +16,9 @@ def main(url):
     summary = run_analysis(url)
     
     print("\n[+] Analysis complete! Output reports have been generated:")
-    print("  -> 1-Page Summary Report: final_summary.md")
-    print("  -> Analyst JSON Log:     analyst_summary_log.txt")
-    print("  -> Run Cost History:      cost_log.txt\n")
+    print("  -> 1-Page Summary Report:   final_summary.md")
+    print("  -> Evaluation Report:       eval.md")
+    print("  -> Run Cost History:        cost_log.txt\n")
 
 if __name__ == '__main__':
     main()

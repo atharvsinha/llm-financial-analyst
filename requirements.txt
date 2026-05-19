@@ -7,3 +7,4 @@ rapidfuzz
 python-dotenv
 markdownify
 markdown2
+PyMuPDF

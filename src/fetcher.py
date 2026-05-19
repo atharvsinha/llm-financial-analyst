@@ -2,6 +2,7 @@ import httpx
 import re
 from bs4 import BeautifulSoup
 from markdownify import markdownify
+import fitz  # PyMuPDF
 
 class FetchError(Exception):
     """Custom exception for fetching errors."""
@@ -15,7 +16,7 @@ def fetch_press_release(url: str) -> str:
         url (str): The URL of the press release.
         
     Returns:
-        str: Raw HTML content.
+        tuple[bytes, str]: Raw bytes and the content type (e.g., 'text/html' or 'application/pdf').
         
     Raises:
         FetchError: If a 4xx/5xx error occurs or a timeout happens.
@@ -25,15 +26,30 @@ def fetch_press_release(url: str) -> str:
     }
     
     try:
-        response = httpx.get(url, headers=headers, timeout=15.0)
+        response = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True)
         response.raise_for_status()
-        return response.text
+        content_type = response.headers.get("Content-Type", "").lower()
+        return response.content, content_type
     except httpx.HTTPStatusError as e:
         raise FetchError(f"HTTP error fetching {url}: {e.response.status_code} {e.response.reason_phrase}") from e
     except httpx.TimeoutException as e:
         raise FetchError(f"Timeout while fetching {url}") from e
     except httpx.RequestError as e:
         raise FetchError(f"Request error while fetching {url}: {str(e)}") from e
+
+def pdf_to_markdown(pdf_bytes: bytes) -> str:
+    """
+    Extracts text from a PDF and returns it as normalized Markdown.
+    """
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    markdown_text = ""
+    for page in doc:
+        markdown_text += page.get_text("text") + "\n\n"
+    
+    # Normalize excessive newlines and invisible spaces
+    normalized_md = re.sub(r'\n{3,}', '\n\n', markdown_text).strip()
+    normalized_md = normalized_md.replace('\xa0', ' ').replace('\u200b', '')
+    return normalized_md
 
 def html_to_markdown(html: str) -> str:
     """
@@ -49,11 +65,9 @@ def html_to_markdown(html: str) -> str:
     """
     soup = BeautifulSoup(html, "html.parser")
     
-    # Remove standard non-content HTML5 semantic tags and resources
     for element in soup(["nav", "footer", "header", "aside", "script", "style", "noscript", "iframe"]):
         element.decompose()
         
-    # Remove elements that are likely cookie banners, popups, or advertisements based on their class or id
     removable_keywords = re.compile(r'cookie|banner|popup|modal|advert|newsletter|consent', re.I)
     
     for element in soup.find_all(class_=removable_keywords):
@@ -62,8 +76,7 @@ def html_to_markdown(html: str) -> str:
     for element in soup.find_all(id=removable_keywords):
         element.decompose()
         
-    # Attempt to locate the main content area to avoid parsing sidebars and site-wide wrappers
-    main_content = soup.find("main") or soup.find("article") or soup.find(id=re.compile(r'main', re.I)) or soup.body
+    main_content = soup.find("main") or soup.find("article") or soup.find("div", id=re.compile(r'main', re.I)) or soup.body
     
     if not main_content:
         return ""
@@ -73,5 +86,8 @@ def html_to_markdown(html: str) -> str:
     
     # Normalize excessive newlines to a double newline (standard paragraph break)
     normalized_md = re.sub(r'\n{3,}', '\n\n', markdown_text).strip()
+    
+    # Normalize non-breaking spaces and zero-width spaces which break exact citation matching
+    normalized_md = normalized_md.replace('\xa0', ' ').replace('\u200b', '')
     
     return normalized_md

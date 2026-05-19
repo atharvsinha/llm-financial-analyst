@@ -28,9 +28,15 @@ def render_markdown(summary: AnalystSummary) -> str:
     lines.append(f"**Question:** {summary.question.text}\n")
     
     # Cost Log Table
-    lines.append("## Telemetry & Cost")
-    lines.append("| Input Tokens | Output Tokens | USD Cost | Model |")
-    lines.append("|---|---|---|---|")
-    lines.append(f"| {summary.cost_log.input_tokens} | {summary.cost_log.output_tokens} | ${summary.cost_log.usd_cost:.5f} | {summary.cost_log.model} |")
+    lines.append("## Telemetry & Cost\n")
+    lines.append("| Phase | Input Tokens | Output Tokens | USD Cost | Model |")
+    lines.append("|---|---|---|---|---|")
+    
+    if summary.cost_log.calls:
+        for call in summary.cost_log.calls:
+            lines.append(f"| {call['phase']} | {call['input_tokens']} | {call['output_tokens']} | ${call['usd_cost']:.5f} | {call['model']} |")
+        lines.append(f"| **Total** | **{summary.cost_log.input_tokens}** | **{summary.cost_log.output_tokens}** | **${summary.cost_log.usd_cost:.5f}** | **{summary.cost_log.model}** |")
+    else:
+        lines.append(f"| Total | {summary.cost_log.input_tokens} | {summary.cost_log.output_tokens} | ${summary.cost_log.usd_cost:.5f} | {summary.cost_log.model} |")
     
     return "\n".join(lines)

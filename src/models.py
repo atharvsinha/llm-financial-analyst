@@ -14,8 +14,10 @@ class ExtractedQuestion(BaseModel):
     text: str = Field(..., description="The analyst question.")
     premise: str = Field(..., description="The premise of the question, supported by source text.")
 
-class HighlightsList(BaseModel):
-    highlights: List[ExtractedHighlight] = Field(..., description="A list of extracted highlights.")
+class FullExtractionResult(BaseModel):
+    highlights: List[ExtractedHighlight] = Field(..., description="Exactly 3 extracted highlights.")
+    risk: ExtractedRisk = Field(..., description="A forward-looking risk extracted from the text.")
+    question: ExtractedQuestion = Field(..., description="An analytical question for an earnings call.")
 
 class Highlight(ExtractedHighlight):
     confidence: float = Field(..., description="Confidence score.")
@@ -30,10 +32,11 @@ class AnalystQuestion(ExtractedQuestion):
     confidence_reasoning: str = Field(..., description="Reasoning for the given confidence score.")
 
 class CostLog(BaseModel):
-    input_tokens: int = Field(..., description="Number of input tokens.")
-    output_tokens: int = Field(..., description="Number of output tokens.")
-    usd_cost: float = Field(..., description="Total estimated cost in USD.")
-    model: str = Field(..., description="The model used (e.g., 'gpt-4o').")
+    input_tokens: int = Field(0, description="Total number of input tokens.")
+    output_tokens: int = Field(0, description="Total number of output tokens.")
+    usd_cost: float = Field(0.0, description="Total estimated cost in USD.")
+    model: str = Field("", description="The model used (e.g., 'gpt-4o').")
+    calls: list[dict] = Field(default_factory=list, description="List of individual LLM calls.")
 
 class AnalystSummary(BaseModel):
     highlights: List[Highlight] = Field(

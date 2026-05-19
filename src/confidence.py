@@ -7,11 +7,9 @@ def calculate_highlight_confidence(markdown: str, extracted: ExtractedHighlight)
     # 1. Does citation_span exist as a substring?
     span_exists = False
     if extracted.citation_span and extracted.citation_span != "N/A":
-        # Check if the citation span exists exactly, ignoring minor whitespace issues
         span_exists = extracted.citation_span in markdown
     
     # 2. Do all numbers in the highlight text appear within the citation_span?
-    # Extract numbers from text and citation span
     text_numbers = set(re.findall(r'\d+(?:\.\d+)?', extracted.text))
     span_numbers = set(re.findall(r'\d+(?:\.\d+)?', extracted.citation_span))
     
@@ -23,7 +21,6 @@ def calculate_highlight_confidence(markdown: str, extracted: ExtractedHighlight)
     # 3. Does metric_label fuzzy-match the start of the cited line?
     metric_match = False
     if extracted.metric_label and extracted.metric_label != "N/A" and extracted.citation_span:
-        # Check first 50 chars of the citation span or similar
         score = fuzz.partial_ratio(extracted.metric_label.lower(), extracted.citation_span.lower()[:50])
         metric_match = score > 80
         
@@ -50,32 +47,51 @@ def calculate_highlight_confidence(markdown: str, extracted: ExtractedHighlight)
     )
 
 def calculate_risk_confidence(markdown: str, extracted: ExtractedRisk) -> Risk:
-    # 1. Does the citation_span contain a quote, or do nearby sentences contain an executive title keyword or attribution verb?
-    has_quote = '"' in extracted.citation_span or "“" in extracted.citation_span or "”" in extracted.citation_span or "'" in extracted.citation_span
-    
+    # Attribution check — three layers
+    span_lower = extracted.citation_span.lower()
+
+    # Layer A: explicit quotes in the citation span
+    has_quote = ('"' in extracted.citation_span or '\u201c' in extracted.citation_span
+                 or '\u201d' in extracted.citation_span or "'" in extracted.citation_span)
+
+    # Layer B: scan citation span AND nearby text (400 chars) for executive keywords
     idx = markdown.find(extracted.citation_span)
     nearby_text = ""
     if idx != -1:
-        # Check roughly 200 chars before and after the span
-        start = max(0, idx - 200)
-        end = min(len(markdown), idx + len(extracted.citation_span) + 200)
+        start = max(0, idx - 400)
+        end = min(len(markdown), idx + len(extracted.citation_span) + 400)
         nearby_text = markdown[start:end].lower()
-        
-    executive_keywords = ["ceo", "cfo", "president", "management", "officer", "executive"]
-    attribution_verbs = ["stated", "said", "noted", "added", "commented", "explained", "mentioned"]
-    
-    has_attribution = any(kw in nearby_text for kw in executive_keywords) or any(verb in nearby_text for verb in attribution_verbs)
-    
+
+    executive_keywords = ["ceo", "cfo", "president", "management", "officer", "executive",
+                          "chief executive", "chief financial"]
+
+    # Layer C: forward-looking guidance verbs — covers both direct attribution AND guidance language
+    attribution_verbs = [
+        "stated", "said", "noted", "added", "commented", "explained", "mentioned",
+        "expects", "expected", "anticipates", "anticipated", "projects", "projected",
+        "intends", "believes", "estimates", "forecasts", "targets", "guides", "guided"
+    ]
+
+    # Guidance section headers are implicit management attribution
+    guidance_headers = ["outlook", "guidance", "q2 2026", "full year 2026", "fy 2026",
+                        "management commentary", "business outlook"]
+
+    # Search both the span and surrounding context
+    search_text = span_lower + " " + nearby_text
+    has_executive = any(kw in search_text for kw in executive_keywords)
+    has_verb = any(verb in search_text for verb in attribution_verbs)
+    has_guidance_context = any(h in search_text for h in guidance_headers)
+
+    has_attribution = has_executive or has_verb or has_guidance_context
     attribution_pass = has_quote or has_attribution
-    
-    # 2. Is the span not under a boilerplate header? 
+
+    # 2. Is the span not under a boilerplate header?
     not_boilerplate = True
     if idx != -1:
-        # Look at the text before the citation to see if we recently passed a boilerplate heading
         before_text = markdown[max(0, idx - 500):idx].lower()
-        if "safe harbor" in before_text or "forward-looking" in before_text:
+        if "safe harbor" in before_text or "forward-looking statements" in before_text:
             not_boilerplate = False
-            
+
     passes = sum([attribution_pass, not_boilerplate])
     if passes == 2:
         confidence = 0.85
@@ -83,12 +99,12 @@ def calculate_risk_confidence(markdown: str, extracted: ExtractedRisk) -> Risk:
         confidence = 0.40
     else:
         confidence = 0.10
-        
+
     reasoning = json.dumps({
         "attribution_pass": attribution_pass,
         "not_boilerplate": not_boilerplate
     })
-    
+
     return Risk(
         text=extracted.text,
         citation_span=extracted.citation_span,
@@ -100,7 +116,6 @@ def calculate_question_confidence(markdown: str, extracted: ExtractedQuestion, h
     # 1. Does the question's premise appear (as a paraphrase or substring) in the markdown?
     premise_pass = False
     if extracted.premise and extracted.premise != "N/A":
-        # Fuzzy match the premise against the markdown
         score = fuzz.partial_ratio(extracted.premise.lower(), markdown.lower())
         premise_pass = score > 75
         
