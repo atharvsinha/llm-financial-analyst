@@ -112,7 +112,7 @@ Score the analyst question 1–5 as the integer average of:
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.1-flash-lite",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -121,7 +121,7 @@ Score the analyst question 1–5 as the integer average of:
         )
         usage = response.usage_metadata
         if usage:
-            update_cost(usage.prompt_token_count, usage.candidates_token_count, "gemini-2.5-flash", "Evaluation")
+            update_cost(usage.prompt_token_count, usage.candidates_token_count, "gemini-3.1-flash-lite", "Evaluation")
         data = json.loads(response.text)
         return JudgeResult(**data)
     except Exception as e:
@@ -232,7 +232,7 @@ def evaluate_criterion_2(summary: AnalystSummary, markdown: str, rendered_report
 
     # +3 pts: cost re-verification within 10% tolerance
     cl = summary.cost_log
-    expected_cost = (cl.input_tokens / 1_000_000) * 0.30 + (cl.output_tokens / 1_000_000) * 2.50
+    expected_cost = (cl.input_tokens / 1_000_000) * 0.25 + (cl.output_tokens / 1_000_000) * 1.50
     cost_delta_pct = abs(cl.usd_cost - expected_cost) / expected_cost if expected_cost > 0 else 1.0
     cost_pass = cost_delta_pct <= 0.10
     if cost_pass:

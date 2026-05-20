@@ -29,7 +29,7 @@ When you run the script, you'll get three output files:
 
 ## Architectural Trade-offs & Decisions
 
-- **Model Selection**: The original specs recommended `gpt-4o-mini` for the pipeline. I decided to use `gemini-2.5-flash` instead as a trade-off. Since OpenAI doesn't offer free API usage and I already had a Gemini subscription, it was a practical choice that let me take advantage of its native token counting and structured outputs while keeping costs down.
+- **Model Selection**: The original specs recommended `gpt-4o-mini` for the pipeline. I decided to use `gemini-3.1-flash-lite` instead as a trade-off. Since OpenAI doesn't offer free API usage and Gemini offers a newer, highly-efficient model with lower rates ($0.25/1M input, $1.50/1M output), it was a highly cost-effective choice that provides fast, structured outputs while keeping costs extremely low.
 - **Programmatic Confidence Scoring**: I could have used a heavy NLI model for entailment checks, but I wanted to keep things snappy and deterministic. I went with heuristic-based scoring—using `rapidfuzz` for table labels, regex for numbers, and distance checks for boilerplate text. It might be less nuanced than a dedicated semantic model, but it's way more predictable.
 - **Reducing LLM Overhead**: The original implementation relied on 6 separate LLM calls. I managed to consolidate the architecture down to just 2 calls (one for extraction, one for evaluation), while actually improving the confidence scores across the board!
 

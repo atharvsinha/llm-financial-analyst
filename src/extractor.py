@@ -17,7 +17,7 @@ shared_cost_log = CostLog(
     input_tokens=0,
     output_tokens=0,
     usd_cost=0.0,
-    model="gemini-2.5-flash"
+    model="gemini-3.1-flash-lite"
 )
 
 client = genai.Client()
@@ -28,8 +28,8 @@ def update_cost(prompt_tokens: int, completion_tokens: int, model: str, phase: s
     shared_cost_log.input_tokens += prompt_tokens
     shared_cost_log.output_tokens += completion_tokens
     
-    # Gemini 2.5 Flash pricing: $0.30 per 1M input, $2.50 per 1M output
-    cost = (prompt_tokens / 1_000_000) * 0.30 + (completion_tokens / 1_000_000) * 2.50
+    # Gemini 3.1 Flash Lite pricing: $0.25 per 1M input, $1.50 per 1M output
+    cost = (prompt_tokens / 1_000_000) * 0.25 + (completion_tokens / 1_000_000) * 1.50
         
     shared_cost_log.usd_cost += cost
     shared_cost_log.model = model
@@ -89,7 +89,7 @@ def extract_all(markdown: str) -> FullExtractionResult:
     """
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.1-flash-lite",
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -99,7 +99,7 @@ def extract_all(markdown: str) -> FullExtractionResult:
         
         usage = response.usage_metadata
         if usage:
-            update_cost(usage.prompt_token_count, usage.candidates_token_count, "gemini-2.5-flash", "Extraction")
+            update_cost(usage.prompt_token_count, usage.candidates_token_count, "gemini-3.1-flash-lite", "Extraction")
             
         data = json.loads(response.text)
         
