@@ -1,148 +1,160 @@
 import re
 import json
 from rapidfuzz import fuzz
-from src.models import ExtractedHighlight, ExtractedRisk, ExtractedQuestion, Highlight, Risk, AnalystQuestion
+from src.models import HeadlineMetric, SentimentTakeaway, FinancialRisk, AnalystQuestion
 
-def calculate_highlight_confidence(markdown: str, extracted: ExtractedHighlight) -> Highlight:
-    # 1. Does citation_span exist as a substring?
+def calculate_headline_confidence(markdown: str, metric: HeadlineMetric) -> HeadlineMetric:
+    """
+    Computes deterministic F-GVI checks for headline financial figures with strict None guards.
+    """
     span_exists = False
-    if extracted.citation_span and extracted.citation_span != "N/A":
-        span_exists = extracted.citation_span in markdown
+    if metric.citation_span and metric.citation_span != "N/A":
+        span_exists = metric.citation_span in markdown
     
-    # 2. Do all numbers in the highlight text appear within the citation_span?
-    text_numbers = set(re.findall(r'\d+(?:\.\d+)?', extracted.text))
-    span_numbers = set(re.findall(r'\d+(?:\.\d+)?', extracted.citation_span))
+    actual_numbers = set()
+    if metric.actual and metric.actual != "N/A":
+        actual_numbers = set(re.findall(r'\d+(?:\.\d+)?', metric.actual))
+        
+    span_numbers = set()
+    if metric.citation_span and metric.citation_span != "N/A":
+        span_numbers = set(re.findall(r'\d+(?:\.\d+)?', metric.citation_span))
     
-    if len(text_numbers) == 0:
-        numbers_match = True
-    else:
-        numbers_match = text_numbers.issubset(span_numbers)
+    numbers_match = True
+    if actual_numbers:
+        numbers_match = actual_numbers.issubset(span_numbers)
         
-    # 3. Does metric_label fuzzy-match the start of the cited line?
-    metric_match = False
-    if extracted.metric_label and extracted.metric_label != "N/A" and extracted.citation_span:
-        score = fuzz.partial_ratio(extracted.metric_label.lower(), extracted.citation_span.lower()[:50])
-        metric_match = score > 80
-        
-    passes = sum([span_exists, numbers_match, metric_match])
+    tabular_source = False
+    if metric.citation_span and metric.citation_span != "N/A":
+        tabular_source = "|" in metric.citation_span
+    
+    passes = sum([span_exists, numbers_match, tabular_source])
     if passes == 3:
-        confidence = 0.90
+        confidence = 0.95
     elif passes == 2:
-        confidence = 0.65
+        confidence = 0.70
+    elif span_exists:
+        confidence = 0.40
     else:
-        confidence = 0.30
+        confidence = 0.10
         
     reasoning = json.dumps({
-        "span_exists": span_exists,
-        "numbers_match": numbers_match,
-        "metric_match": metric_match
+        "verbatim_span_found": span_exists,
+        "figures_fully_grounded": numbers_match,
+        "tabular_format_match": tabular_source
     })
     
-    return Highlight(
-        text=extracted.text,
-        citation_span=extracted.citation_span,
-        metric_label=extracted.metric_label,
-        confidence=confidence,
-        confidence_reasoning=reasoning
-    )
+    metric.confidence = confidence
+    metric.confidence_reasoning = reasoning
+    return metric
 
-def calculate_risk_confidence(markdown: str, extracted: ExtractedRisk) -> Risk:
-    # Attribution check — three layers
-    span_lower = extracted.citation_span.lower()
 
-    # Layer A: explicit quotes in the citation span
-    has_quote = ('"' in extracted.citation_span or '\u201c' in extracted.citation_span
-                 or '\u201d' in extracted.citation_span or "'" in extracted.citation_span)
+def calculate_takeaway_confidence(markdown: str, takeaway: SentimentTakeaway) -> SentimentTakeaway:
+    """
+    Computes checks for Bull/Bear sentiment takeaways with strict None guards.
+    """
+    span_exists = False
+    if takeaway.citation_span and takeaway.citation_span != "N/A":
+        span_exists = takeaway.citation_span in markdown
+        
+    text_len = len(takeaway.text) if takeaway.text else 0
+    length_valid = 10 <= text_len <= 250
+    
+    passes = sum([span_exists, length_valid])
+    if passes == 2:
+        confidence = 0.90
+    elif span_exists:
+        confidence = 0.50
+    else:
+        confidence = 0.10
+        
+    reasoning = json.dumps({
+        "verbatim_span_found": span_exists,
+        "metric_length_valid": length_valid
+    })
+    
+    takeaway.confidence = confidence
+    takeaway.confidence_reasoning = reasoning
+    return takeaway
 
-    # Layer B: scan citation span AND nearby text (400 chars) for executive keywords
-    idx = markdown.find(extracted.citation_span)
-    nearby_text = ""
-    if idx != -1:
-        start = max(0, idx - 400)
-        end = min(len(markdown), idx + len(extracted.citation_span) + 400)
-        nearby_text = markdown[start:end].lower()
 
-    executive_keywords = ["ceo", "cfo", "president", "management", "officer", "executive",
-                          "chief executive", "chief financial"]
-
-    # Layer C: forward-looking guidance verbs — covers both direct attribution AND guidance language
-    attribution_verbs = [
-        "stated", "said", "noted", "added", "commented", "explained", "mentioned",
-        "expects", "expected", "anticipates", "anticipated", "projects", "projected",
-        "intends", "believes", "estimates", "forecasts", "targets", "guides", "guided"
-    ]
-
-    # Guidance section headers are implicit management attribution
-    guidance_headers = ["outlook", "guidance", "q2 2026", "full year 2026", "fy 2026",
-                        "management commentary", "business outlook"]
-
-    # Search both the span and surrounding context
-    search_text = span_lower + " " + nearby_text
-    has_executive = any(kw in search_text for kw in executive_keywords)
-    has_verb = any(verb in search_text for verb in attribution_verbs)
-    has_guidance_context = any(h in search_text for h in guidance_headers)
-
-    has_attribution = has_executive or has_verb or has_guidance_context
-    attribution_pass = has_quote or has_attribution
-
-    # 2. Is the span not under a boilerplate header?
+def calculate_risk_confidence(markdown: str, risk: FinancialRisk) -> FinancialRisk:
+    """
+    Computes checks for risks with strict None guards.
+    """
+    span_exists = False
+    idx = -1
+    if risk.citation_span and risk.citation_span != "N/A":
+        idx = markdown.find(risk.citation_span)
+        span_exists = idx != -1
+        
     not_boilerplate = True
     if idx != -1:
         before_text = markdown[max(0, idx - 500):idx].lower()
         if "safe harbor" in before_text or "forward-looking statements" in before_text:
             not_boilerplate = False
-
-    passes = sum([attribution_pass, not_boilerplate])
-    if passes == 2:
-        confidence = 0.85
-    elif passes == 1:
-        confidence = 0.40
+            
+    category_matches = False
+    text_lower = risk.text.lower() if risk.text else ""
+    cat_lower = risk.category.lower() if risk.category else ""
+    risk_citation = risk.citation_span.lower() if risk.citation_span else ""
+    
+    if "macro" in cat_lower:
+        category_matches = any(w in text_lower or w in risk_citation for w in ["inflation", "rate", "fx", "currency", "geopolitical", "market", "demand", "macro"])
+    elif "operation" in cat_lower:
+        category_matches = any(w in text_lower or w in risk_citation for w in ["supply", "chain", "labor", "cost", "operating", "facility", "headcount", "ops", "logistics"])
+    elif "financ" in cat_lower:
+        category_matches = any(w in text_lower or w in risk_citation for w in ["debt", "margin", "liquidity", "expense", "interest", "capital", "cash", "credit"])
+    else:
+        category_matches = True
+        
+    passes = sum([span_exists, not_boilerplate, category_matches])
+    if passes == 3:
+        confidence = 0.92
+    elif passes == 2:
+        confidence = 0.65
+    elif span_exists:
+        confidence = 0.35
     else:
         confidence = 0.10
-
-    reasoning = json.dumps({
-        "attribution_pass": attribution_pass,
-        "not_boilerplate": not_boilerplate
-    })
-
-    return Risk(
-        text=extracted.text,
-        citation_span=extracted.citation_span,
-        confidence=confidence,
-        confidence_reasoning=reasoning
-    )
-
-def calculate_question_confidence(markdown: str, extracted: ExtractedQuestion, highlights: list[ExtractedHighlight]) -> AnalystQuestion:
-    # 1. Does the question's premise appear (as a paraphrase or substring) in the markdown?
-    premise_pass = False
-    if extracted.premise and extracted.premise != "N/A":
-        score = fuzz.partial_ratio(extracted.premise.lower(), markdown.lower())
-        premise_pass = score > 75
         
-    # 2. Does the question reference at least one specific metric from the highlights?
-    metric_pass = False
-    question_lower = extracted.text.lower()
-    for h in highlights:
-        if h.metric_label and h.metric_label != "N/A" and h.metric_label.lower() in question_lower:
-            metric_pass = True
-            break
-            
-    passes = sum([premise_pass, metric_pass])
+    reasoning = json.dumps({
+        "verbatim_span_found": span_exists,
+        "legal_boilerplate_avoided": not_boilerplate,
+        "category_context_validated": category_matches
+    })
+    
+    risk.confidence = confidence
+    risk.confidence_reasoning = reasoning
+    return risk
+
+
+def calculate_question_confidence(markdown: str, question: AnalystQuestion, headline: object) -> AnalystQuestion:
+    """
+    Computes checks for probing questions with strict None guards.
+    """
+    premise_grounded = False
+    if question.premise and question.premise != "N/A":
+        score = fuzz.partial_ratio(question.premise.lower(), markdown.lower())
+        premise_grounded = score > 75
+        
+    metric_found = False
+    q_lower = question.text.lower() if question.text else ""
+    if "%" in q_lower or any(c.isdigit() for c in q_lower):
+        metric_found = True
+        
+    passes = sum([premise_grounded, metric_found])
     if passes == 2:
-        confidence = 0.88
-    elif passes == 1:
+        confidence = 0.90
+    elif premise_grounded:
         confidence = 0.50
     else:
         confidence = 0.15
         
     reasoning = json.dumps({
-        "premise_pass": premise_pass,
-        "metric_pass": metric_pass
+        "premise_grounded_in_text": premise_grounded,
+        "financial_metric_referenced": metric_found
     })
     
-    return AnalystQuestion(
-        text=extracted.text,
-        premise=extracted.premise,
-        confidence=confidence,
-        confidence_reasoning=reasoning
-    )
+    question.confidence = confidence
+    question.confidence_reasoning = reasoning
+    return question
